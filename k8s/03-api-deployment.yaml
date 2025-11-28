@@ -1,0 +1,125 @@
+---
+# Deployment для Go API сервиса
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: warden-api
+  namespace: warden
+  labels:
+    app: warden-api
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: warden-api
+  template:
+    metadata:
+      labels:
+        app: warden-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - warden-api
+              topologyKey: kubernetes.io/hostname
+
+      containers:
+      - name: api
+        image: warden-api:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        
+        envFrom:
+        - configMapRef:
+            name: warden-config
+        - secretRef:
+            name: warden-db-credentials
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 2
+
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+
+---
+# Service для API (LoadBalancer для external access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: warden-api-service
+  namespace: warden
+  labels:
+    app: warden-api
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: warden-api
+
+---
+# ClusterIP Service для internal communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: warden-api-internal
+  namespace: warden
+  labels:
+    app: warden-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: warden-api

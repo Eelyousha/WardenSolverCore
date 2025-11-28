@@ -1,0 +1,35 @@
+---
+# Namespace для приложения
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: warden
+
+---
+# ConfigMap для конфигурации приложения
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: warden-config
+  namespace: warden
+data:
+  DB_HOST: "postgres-master.warden.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "warden"
+  DB_SLAVE_HOST: "postgres-slave.warden.svc.cluster.local"
+  DB_SLAVE_PORT: "5432"
+  LOG_LEVEL: "info"
+
+---
+# Secret для учётных данных БД
+apiVersion: v1
+kind: Secret
+metadata:
+  name: warden-db-credentials
+  namespace: warden
+type: Opaque
+stringData:
+  DB_USER: postgres
+  DB_PASSWORD: postgres
+  REPLICATOR_USER: replicator
+  REPLICATOR_PASSWORD: replicator_password

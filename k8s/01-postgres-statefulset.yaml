@@ -1,0 +1,167 @@
+---
+# PersistentVolumeClaim для PostgreSQL Master
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-master-pvc
+  namespace: warden
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# PersistentVolumeClaim для PostgreSQL Slave
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-slave-pvc
+  namespace: warden
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# StatefulSet для PostgreSQL
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: warden
+spec:
+  serviceName: postgres
+  replicas: 2
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: database
+    spec:
+      containers:
+      # PostgreSQL Master
+      - name: master
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: warden
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: warden-db-credentials
+              key: DB_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: warden-db-credentials
+              key: DB_PASSWORD
+        - name: POSTGRES_INITDB_ARGS
+          value: "-c wal_level=replica -c max_wal_senders=3 -c max_replication_slots=3"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+          subPath: master
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+      # PostgreSQL Slave
+      - name: slave
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5433
+          name: postgres-slave
+        env:
+        - name: POSTGRES_DB
+          value: warden
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: warden-db-credentials
+              key: DB_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: warden-db-credentials
+              key: DB_PASSWORD
+        - name: PGUSER
+          valueFrom:
+            secretKeyRef:
+              name: warden-db-credentials
+              key: REPLICATOR_USER
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: warden-db-credentials
+              key: REPLICATOR_PASSWORD
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+          subPath: slave
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres -p 5433
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U postgres -p 5433
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-master-pvc
+
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi

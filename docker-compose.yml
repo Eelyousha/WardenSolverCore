@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Master
+  postgres-master:
+    image: postgres:15-alpine
+    container_name: warden-master
+    environment:
+      POSTGRES_DB: warden
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - master-data:/var/lib/postgresql/data
+      - ./docker/master-init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - warden-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL Slave
+  postgres-slave:
+    image: postgres:15-alpine
+    container_name: warden-slave
+    environment:
+      POSTGRES_DB: warden
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGUSER: replicator
+      PGPASSWORD: replicator_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - slave-data:/var/lib/postgresql/data
+      - ./docker/slave-init.sh:/docker-entrypoint-initdb.d/init.sh
+    networks:
+      - warden-network
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Go API Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: warden-api
+    environment:
+      DB_HOST: postgres-master
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: warden
+      DB_SLAVE_HOST: postgres-slave
+      DB_SLAVE_PORT: 5432
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      postgres-slave:
+        condition: service_healthy
+    networks:
+      - warden-network
+    restart: unless-stopped
+
+  # Nginx Load Balancer (опционально для локального тестирования)
+  nginx:
+    image: nginx:alpine
+    container_name: warden-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+    networks:
+      - warden-network
+
+volumes:
+  master-data:
+  slave-data:
+
+networks:
+  warden-network:
+    driver: bridge
